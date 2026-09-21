@@ -1,0 +1,11 @@
+node_modules/
+dist/
+*.log
+
+# Secrets live only on the machine that needs them.
+.env
+.env.*
+!.env.example
+
+.DS_Store
+docker-compose.override.yml

@@ -1,23 +1,36 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import {
   calculateAccuracy,
   calculateConsistency,
   calculateRawWpm,
   calculateWpm,
   createTypingText,
+  getLanguageDirection,
   getLanguageOptions,
 } from '../utils/typing';
+
+const WpmChart = lazy(() => import('./WpmChart'));
 
 const DURATIONS = [15, 30, 60, 120];
 const WORD_COUNTS = [10, 25, 50, 100];
 const DEFAULT_LANGUAGE = 'english';
+// The first keystrokes land over a near-zero elapsed time, which reads as
+// hundreds of WPM. Sampling those would drag every consistency score to 0.
+const WARMUP_MS = 2000;
 
-export default function TypingTest({ user, onResultSaved }) {
+export default function TypingTest({ onResultSaved }) {
   const inputRef = useRef(null);
   const startedAtRef = useRef(0);
   const frameRef = useRef();
   const tabShortcutRef = useRef(false);
+  // the timer and the window key listener both outlive the render that created
+  // them, so they must not close over state directly - they call through these
+  const finishRef = useRef(null);
+  const resetRef = useRef(null);
+  // the caret span and the strip it sits on, for keeping the active line visible
+  const caretRef = useRef(null);
+  const trackRef = useRef(null);
+  const [focused, setFocused] = useState(false);
   const [selectedLanguage, setSelectedLanguage] = useState(DEFAULT_LANGUAGE);
   const [text, setText] = useState(() => createTypingText(DEFAULT_LANGUAGE));
   const [mode, setMode] = useState('time');
@@ -49,7 +62,7 @@ export default function TypingTest({ user, onResultSaved }) {
         setTimeLeft(remaining / 1000);
 
         if (remaining <= 0) {
-          finishTest();
+          finishRef.current?.();
         }
       }, 50);
     }
@@ -76,7 +89,7 @@ export default function TypingTest({ user, onResultSaved }) {
       incorrectChars,
     });
 
-    if (started && !finished) {
+    if (started && !finished && elapsedMs >= WARMUP_MS) {
       const nextPoint = { time: Number((elapsedMs / 1000).toFixed(1)), wpm: Number(wpm.toFixed(1)) };
       setWpmHistory((previous) => {
         if (!previous.length || previous[previous.length - 1].time !== nextPoint.time) {
@@ -88,16 +101,53 @@ export default function TypingTest({ user, onResultSaved }) {
   }, [typed, started, finished, text]);
 
   const renderedText = useMemo(() => {
-    return text.split('').map((char, index) => {
+    const nodes = [];
+    let index = 0;
+
+    const renderChar = (char) => {
       let className = 'char';
       if (index < typed.length) {
         className += typed[index] === char ? ' correct' : ' incorrect';
-      } else if (index === typed.length && started) {
+      } else if (index === typed.length) {
         className += ' current';
       }
-      return <span key={`${char}-${index}`} className={className}>{char}</span>;
+
+      const node = (
+        <span key={index} className={className} ref={index === typed.length ? caretRef : null}>
+          {char}
+        </span>
+      );
+
+      index += 1;
+      return node;
+    };
+
+    // A span per character lets the browser break a line in the middle of a
+    // word, which looks broken. Wrapping each word in an inline-block keeps it
+    // whole; the spaces stay plain inline, and that is where lines may break.
+    text.split(' ').forEach((word, wordIndex) => {
+      if (wordIndex > 0) nodes.push(renderChar(' '));
+      nodes.push(<span key={`w${index}`} className="word">{[...word].map(renderChar)}</span>);
     });
-  }, [text, typed, started]);
+
+    return nodes;
+  }, [text, typed]);
+
+  // The text runs to hundreds of characters, so only three lines are on screen
+  // and the strip slides up to keep the caret on the middle one. Written
+  // straight to the node: this runs on every keystroke and re-rendering for it
+  // would be a render per character typed.
+  useEffect(() => {
+    const caret = caretRef.current;
+    const track = trackRef.current;
+    if (!caret || !track) return;
+
+    // offsetHeight of an inline span is its glyph box, not its line box, so the
+    // line height has to come from the track's own computed style.
+    const lineHeight = parseFloat(getComputedStyle(track).lineHeight);
+    const line = Math.round(caret.offsetTop / lineHeight);
+    track.style.transform = `translateY(-${Math.max(0, line - 1) * lineHeight}px)`;
+  }, [typed, text]);
 
   const focusInput = () => inputRef.current?.focus();
 
@@ -142,6 +192,9 @@ export default function TypingTest({ user, onResultSaved }) {
   useEffect(() => {
     const handleKeyDown = (event) => {
       if (event.key === 'Tab') {
+        // Swallowing Tab everywhere would trap anyone navigating by keyboard,
+        // so the restart shortcut only arms while the test itself has focus.
+        if (document.activeElement !== inputRef.current) return;
         event.preventDefault();
         tabShortcutRef.current = true;
         return;
@@ -150,7 +203,7 @@ export default function TypingTest({ user, onResultSaved }) {
       if (event.key === 'Enter' && tabShortcutRef.current) {
         event.preventDefault();
         tabShortcutRef.current = false;
-        resetTest();
+        resetRef.current?.();
         return;
       }
 
@@ -159,13 +212,20 @@ export default function TypingTest({ user, onResultSaved }) {
       }
 
       if (event.key === 'Escape') {
-        resetTest();
+        resetRef.current?.();
+        return;
+      }
+
+      // Typing after clicking away should put you back in the test rather than
+      // going nowhere. This keystroke is spent on focusing, not typed.
+      if (event.key.length === 1 && !event.metaKey && !event.ctrlKey && document.activeElement !== inputRef.current) {
+        inputRef.current?.focus();
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedLanguage, duration, text, mode, wordCount, punctuation, numbers, quote, uppercase]);
+  }, []);
 
   const finishTest = async (completedText = typed) => {
     if (finished) return;
@@ -193,6 +253,11 @@ export default function TypingTest({ user, onResultSaved }) {
     onResultSaved?.(payload);
   };
 
+  useEffect(() => {
+    finishRef.current = finishTest;
+    resetRef.current = resetTest;
+  });
+
   const handleInput = (event) => {
     const value = event.target.value;
     if (finished) return;
@@ -207,6 +272,14 @@ export default function TypingTest({ user, onResultSaved }) {
     }
 
     setTyped(value);
+
+    if (mode === 'time') {
+      // a time test ends on the clock, never on running out of words
+      if (value.length > text.length - 40) {
+        setText((previous) => `${previous} ${buildText()}`);
+      }
+      return;
+    }
 
     if (value.length >= text.length) {
       finishTest(value);
@@ -255,6 +328,7 @@ export default function TypingTest({ user, onResultSaved }) {
   };
 
   const languageOptions = getLanguageOptions();
+  const direction = getLanguageDirection(selectedLanguage);
 
   const durationOptions = DURATIONS.map((option) => (
     <button
@@ -294,49 +368,72 @@ export default function TypingTest({ user, onResultSaved }) {
     </button>
   ));
 
+  const typedWords = typed.trim() ? typed.trim().split(/\s+/).length : 0;
+
   return (
-    <div className="typing-shell">
-      <div className="toolbar">
-        <div className="language-selector">
-          <label htmlFor="language-select">Language</label>
-          <select id="language-select" value={selectedLanguage} onChange={handleLanguageChange}>
+    <div className={`typing-shell${started && !finished ? ' is-running' : ''}`}>
+      {/* The config bar fades out once the clock starts - nothing here is
+          useful mid-test, and a still screen is easier to read against. */}
+      <div className="config-bar">
+        <div className="config-group" role="group" aria-label="Text options">
+          <button type="button" className={punctuation ? 'chip active' : 'chip'} onClick={() => changeTextOption('punctuation', !punctuation)}>@ punctuation</button>
+          <button type="button" className={numbers ? 'chip active' : 'chip'} onClick={() => changeTextOption('numbers', !numbers)}># numbers</button>
+          <button type="button" className={quote ? 'chip active' : 'chip'} onClick={() => changeTextOption('quote', !quote)}>❝ quote</button>
+          <button type="button" className={uppercase ? 'chip active' : 'chip'} onClick={() => changeTextOption('uppercase', !uppercase)}>Aa case</button>
+        </div>
+
+        <span className="config-divider" />
+
+        <div className="config-group" role="group" aria-label="Test mode">
+          <button type="button" className={mode === 'time' ? 'chip active' : 'chip'} onClick={() => changeMode('time')}>time</button>
+          <button type="button" className={mode === 'words' ? 'chip active' : 'chip'} onClick={() => changeMode('words')}>words</button>
+        </div>
+
+        <span className="config-divider" />
+
+        <div className="config-group" role="group" aria-label={mode === 'time' ? 'Duration' : 'Word count'}>
+          {mode === 'time' ? durationOptions : wordOptions}
+        </div>
+
+        <span className="config-divider" />
+
+        <div className="config-group">
+          <select id="language-select" aria-label="Language" className="chip select" value={selectedLanguage} onChange={handleLanguageChange}>
             {languageOptions.map((option) => (
               <option key={option.value} value={option.value}>{option.label}</option>
             ))}
           </select>
         </div>
-        <div className="mode-group" aria-label="Test mode">
-          <button type="button" className={mode === 'time' ? 'active' : ''} onClick={() => changeMode('time')}>Time</button>
-          <button type="button" className={mode === 'words' ? 'active' : ''} onClick={() => changeMode('words')}>Words</button>
-        </div>
-        <div className="duration-group">{mode === 'time' ? durationOptions : wordOptions}</div>
-        <span className="restart-hint" aria-label="Restart test shortcut">
-          <kbd>Tab</kbd><span>+</span><kbd>Enter</kbd><span>-</span> Restart test
+      </div>
+
+      <div className="live-bar">
+        <span className="live-counter mono">
+          {mode === 'time' ? Math.ceil(timeLeft) : `${typedWords}/${wordCount}`}
         </span>
+        <span className="live-wpm mono">{Math.round(stats.wpm)} wpm</span>
       </div>
 
-      <div className="typing-options">
-        <button type="button" className={punctuation ? 'option active' : 'option'} onClick={() => changeTextOption('punctuation', !punctuation)}>@ punctuation</button>
-        <button type="button" className={numbers ? 'option active' : 'option'} onClick={() => changeTextOption('numbers', !numbers)}># numbers</button>
-        <button type="button" className={quote ? 'option active' : 'option'} onClick={() => changeTextOption('quote', !quote)}>❝ quote</button>
-        <button type="button" className={uppercase ? 'option active' : 'option'} onClick={() => changeTextOption('uppercase', !uppercase)}>A sentence case</button>
-      </div>
+      {/* The textarea sits invisibly on top of the text: it takes the
+          keystrokes, the rendered spans below show them. A visible input would
+          make the reader's eyes jump between two copies of the same sentence. */}
+      <div
+        className={`test-panel${focused ? '' : ' is-blurred'}`}
+        onClick={focusInput}
+        role="presentation"
+      >
+        <div className="text-window">
+          <div className="text-track" ref={trackRef} dir={direction} lang={selectedLanguage}>
+            {renderedText}
+          </div>
+        </div>
 
-      <div className="stats-row">
-        <div><span>WPM</span><strong>{stats.wpm.toFixed(1)}</strong></div>
-        <div><span>Raw</span><strong>{stats.rawWpm.toFixed(1)}</strong></div>
-        <div><span>Accuracy</span><strong>{stats.accuracy.toFixed(1)}%</strong></div>
-        <div><span>Errors</span><strong>{stats.errors}</strong></div>
-        <div><span>{mode === 'time' ? 'Time' : 'Words'}</span><strong>{mode === 'time' ? `${timeLeft.toFixed(1)}s` : `${typed.trim() ? typed.trim().split(/\s+/).length : 0} / ${wordCount}`}</strong></div>
-      </div>
-
-      <div className="test-panel">
-        <div className="text-display" onClick={focusInput}>{renderedText}</div>
         <textarea
           ref={inputRef}
+          dir={direction}
           value={typed}
           onChange={handleInput}
-          onFocus={focusInput}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
           onCopy={(event) => event.preventDefault()}
           onCut={(event) => event.preventDefault()}
           onPaste={(event) => event.preventDefault()}
@@ -345,23 +442,31 @@ export default function TypingTest({ user, onResultSaved }) {
           spellCheck={false}
           autoCapitalize="off"
           autoCorrect="off"
-          placeholder="Start typing here..."
+          aria-label="Typing test input"
           className="typing-input"
         />
+
+        <div className="focus-veil" aria-hidden="true">
+          <span>Click here or press any key to focus</span>
+        </div>
       </div>
 
-      <div className="chart-box">
-        <h3>WPM graph</h3>
-        <ResponsiveContainer width="100%" height={180}>
-          <LineChart data={wpmHistory.length ? wpmHistory : [{ time: 0, wpm: 0 }]}> 
-            <CartesianGrid strokeDasharray="3 3" stroke="#2f3344" />
-            <XAxis dataKey="time" stroke="#9aa3bd" tickFormatter={(value) => `${value}s`} />
-            <YAxis stroke="#9aa3bd" domain={[0, 400]} ticks={[0, 100, 200, 300, 400]} />
-            <Tooltip />
-            <Line type="monotone" dataKey="wpm" stroke="#7dd3fc" strokeWidth={2} dot={{ r: 2 }} />
-          </LineChart>
-        </ResponsiveContainer>
+      <div className="test-footer">
+        <button type="button" className="restart-button" onClick={() => resetTest()} aria-label="Restart test">
+          ⟳ restart
+        </button>
+        <span className="restart-hint">
+          <kbd>Tab</kbd> then <kbd>Enter</kbd> to restart
+        </span>
       </div>
+
+      {wpmHistory.length ? (
+        <div className="chart-box">
+          <Suspense fallback={<p className="chart-placeholder">Loading graph...</p>}>
+            <WpmChart data={wpmHistory} />
+          </Suspense>
+        </div>
+      ) : null}
     </div>
   );
 }

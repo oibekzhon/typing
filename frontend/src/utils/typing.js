@@ -284,6 +284,16 @@ export function getLanguageOptions() {
   }));
 }
 
+const RTL_LANGUAGES = new Set(['arabic']);
+
+// ponytail: sets reading direction only. The test renders one <span> per
+// character, and browsers do not shape Arabic across element boundaries, so
+// letters still draw in isolated forms. Fixing that means rendering the shaped
+// string once and overlaying the per-character highlight.
+export function getLanguageDirection(language) {
+  return RTL_LANGUAGES.has(language) ? 'rtl' : 'ltr';
+}
+
 const QUOTE_TEXTS = [
   'The future depends on what you do today.',
   'Great things are done by a series of small things brought together.',
@@ -307,8 +317,8 @@ function addNumbers(text) {
   return `${text} Remember 3 simple steps, 5 minutes, and 100 percent focus.`;
 }
 
-export function createTypingText(language = 'english', options = {}) {
-  const { punctuation = false, numbers = false, quote = false, uppercase = false, wordCount = 0 } = options;
+// One random sentence, cleaned up for the selected options.
+function composeChunk(language, { punctuation, numbers, quote }) {
   let text = quote
     ? QUOTE_TEXTS[Math.floor(Math.random() * QUOTE_TEXTS.length)]
     : createSampleText(language);
@@ -317,19 +327,37 @@ export function createTypingText(language = 'english', options = {}) {
   if (numbers) text = addNumbers(text);
 
   text = text.toLowerCase();
+
   if (!numbers) text = text.replace(/\d/g, '');
-  if (!punctuation && !quote) text = text.replace(/[^\p{L}\s]/gu, '');
-  if (!punctuation && quote) text = text.replace(/[\d]/g, '');
-  text = text.replace(/\s+/g, ' ').trim();
-  if (uppercase) text = text.replace(/^\s*\p{L}/u, (letter) => letter.toUpperCase());
+
+  // Quotes keep the punctuation they were written with. Generated sentences get
+  // stripped back to letters - plus digits, when the numbers option asked for
+  // them, which the old letters-only strip silently removed again.
+  if (!punctuation && !quote) {
+    text = text.replace(numbers ? /[^\p{L}\p{N}\s]/gu : /[^\p{L}\s]/gu, '');
+  }
+
+  return text.replace(/\s+/g, ' ').trim();
+}
+
+export function createTypingText(language = 'english', options = {}) {
+  const { punctuation = false, numbers = false, quote = false, uppercase = false, wordCount = 0 } = options;
+  const chunkOptions = { punctuation, numbers, quote };
+  let text = composeChunk(language, chunkOptions);
 
   if (wordCount > 0) {
-    const words = [];
-    while (words.length < wordCount) {
-      words.push(...text.split(/\s+/));
+    // Draw a fresh sentence each time instead of looping one, or a 100-word
+    // test is the same handful of words typed over and over.
+    const words = text.split(/\s+/);
+    let guard = 0;
+    while (words.length < wordCount && guard < 200) {
+      words.push(...composeChunk(language, chunkOptions).split(/\s+/));
+      guard += 1;
     }
     text = words.slice(0, wordCount).join(' ');
   }
+
+  if (uppercase) text = text.replace(/^\s*\p{L}/u, (letter) => letter.toUpperCase());
 
   return text;
 }

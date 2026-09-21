@@ -3,6 +3,10 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm install
 COPY . .
+# Baked into the bundle at build time. Defaults to the path nginx proxies below,
+# so the image works wherever it is deployed instead of calling localhost:4000.
+ARG VITE_API_URL=/api
+ENV VITE_API_URL=$VITE_API_URL
 RUN npm run build
 
 FROM nginx:alpine

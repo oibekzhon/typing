@@ -1,29 +1,35 @@
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:4000/api';
 
+export const STORAGE_KEY = 'typing_token';
+
 function getToken() {
-  return localStorage.getItem('typing_token');
+  return localStorage.getItem(STORAGE_KEY);
 }
 
-function headers(extra = {}) {
-  return {
-    'Content-Type': 'application/json',
-    ...extra,
-  };
-}
-
-async function request(path, options = {}) {
+async function request(path, { skipAuth, ...options } = {}) {
   const token = getToken();
+  const sendToken = Boolean(token) && !skipAuth;
+
   const response = await fetch(`${API_BASE}${path}`, {
     ...options,
     headers: {
-      ...(token && !options.skipAuth ? { Authorization: `Bearer ${token}` } : {}),
-      ...headers(),
+      'Content-Type': 'application/json',
+      ...(sendToken ? { Authorization: `Bearer ${token}` } : {}),
       ...(options.headers || {}),
     },
   });
 
   const contentType = response.headers.get('content-type') || '';
   const data = contentType.includes('application/json') ? await response.json() : await response.text();
+
+  // A token the server rejects will be rejected by every later call too, so it
+  // goes now and the app hears about it once. Without this the header keeps
+  // showing a user who is no longer logged in. skipAuth keeps a failed login
+  // attempt from wiping the session of whoever is already signed in.
+  if (response.status === 401 && sendToken) {
+    localStorage.removeItem(STORAGE_KEY);
+    window.dispatchEvent(new Event('auth:expired'));
+  }
 
   if (!response.ok) {
     throw new Error(typeof data === 'string' ? data : data.message || 'Request failed.');
@@ -33,9 +39,9 @@ async function request(path, options = {}) {
 }
 
 export const authApi = {
-  register: (payload) => request('/auth/register', { method: 'POST', body: JSON.stringify(payload) }),
-  login: (payload) => request('/auth/login', { method: 'POST', body: JSON.stringify(payload) }),
-  me: () => request('/auth/me', { skipAuth: false }),
+  register: (payload) => request('/auth/register', { method: 'POST', skipAuth: true, body: JSON.stringify(payload) }),
+  login: (payload) => request('/auth/login', { method: 'POST', skipAuth: true, body: JSON.stringify(payload) }),
+  me: () => request('/auth/me'),
 };
 
 export const leaderboardApi = {

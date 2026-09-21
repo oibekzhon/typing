@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+
+    # The route tests talk to a real database - initDatabase() builds the
+    # schema on connect, so an empty one is all this needs.
+    services:
+      db:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: typingdb
+          POSTGRES_USER: typinguser
+          POSTGRES_PASSWORD: typingpass
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U typinguser -d typingdb"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - run: npm ci
+        working-directory: backend
+
+      - run: npm test
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://typinguser:typingpass@localhost:5432/typingdb
+          JWT_SECRET: ci-only-secret
+
+  frontend:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+        working-directory: frontend
+
+      - run: npm run lint
+        working-directory: frontend
+
+      - run: npm test
+        working-directory: frontend
+
+      - run: npm run build
+        working-directory: frontend

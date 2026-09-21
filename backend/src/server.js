@@ -3,17 +3,69 @@ const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { initDatabase, pool } = require('./db');
-const { normalizeResult } = require('./utils');
-const { requireAuth, requireUser } = require('./middleware/auth');
+const { normalizeResult, validateResult, JWT_SECRET } = require('./utils');
+const { authenticate } = require('./middleware/auth');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
 
-app.use(cors());
+// Behind nginx or Railway, req.ip is the proxy unless we trust it - and a
+// shared ip would make the auth rate limiter lock out every user at once.
+if (process.env.NODE_ENV === 'production') {
+  app.set('trust proxy', 1);
+}
+
+// Same-origin deploys (nginx proxies /api) need no CORS at all; a split
+// frontend/backend deploy must list its origins in CORS_ORIGIN.
+const corsOrigin = process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(',').map((origin) => origin.trim())
+  : process.env.NODE_ENV !== 'production';
+
+app.use(cors({ origin: corsOrigin }));
 app.use(express.json());
 
+// This service only ever returns JSON, so the headers that matter are the ones
+// stopping a browser from treating a response as something else. CSP and HSTS
+// belong on whatever serves the HTML - see frontend/nginx.conf.
+app.use((_req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  next();
+});
+
+const AUTH_WINDOW_MS = 15 * 60 * 1000;
+// Raised by the test suite, which drives hundreds of attempts from one address.
+const AUTH_MAX_ATTEMPTS = Number(process.env.AUTH_MAX_ATTEMPTS) || 10;
+// ponytail: per-process counters, so limits are per-instance. Move to Redis if
+// the API ever runs on more than one replica.
+const authAttempts = new Map();
+
+function rateLimitAuth(req, res, next) {
+  const now = Date.now();
+
+  if (authAttempts.size > 5000) {
+    for (const [ip, seen] of authAttempts) {
+      if (now > seen.resetAt) authAttempts.delete(ip);
+    }
+  }
+
+  const entry = authAttempts.get(req.ip);
+  if (!entry || now > entry.resetAt) {
+    authAttempts.set(req.ip, { count: 1, resetAt: now + AUTH_WINDOW_MS });
+    return next();
+  }
+
+  if (entry.count >= AUTH_MAX_ATTEMPTS) {
+    return res.status(429).json({ message: 'Too many attempts. Please try again later.' });
+  }
+
+  entry.count += 1;
+  next();
+}
+
 function signToken(user) {
-  return jwt.sign({ id: user.id, username: user.username }, process.env.JWT_SECRET || 'dev-secret', {
+  return jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, {
     expiresIn: '7d',
   });
 }
@@ -22,7 +74,7 @@ app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', message: 'Typing API is running.' });
 });
 
-app.post('/api/auth/register', async (req, res) => {
+app.post('/api/auth/register', rateLimitAuth, async (req, res) => {
   const { username, password, confirmPassword } = req.body || {};
 
   if (!username || !password || !confirmPassword) {
@@ -38,8 +90,14 @@ app.post('/api/auth/register', async (req, res) => {
     return res.status(400).json({ message: 'Username must be 3-20 characters and contain only letters, numbers, or underscores.' });
   }
 
-  if (password.length < 6) {
-    return res.status(400).json({ message: 'Password must be at least 6 characters long.' });
+  // bcrypt silently ignores anything past 72 bytes, so a longer password would
+  // give the user false confidence. Reject it instead of truncating.
+  if (password.length < 8 || Buffer.byteLength(password, 'utf8') > 72) {
+    return res.status(400).json({ message: 'Password must be 8-72 characters long.' });
+  }
+
+  if (password.toLowerCase() === cleanUsername.toLowerCase()) {
+    return res.status(400).json({ message: 'Password must be different from the username.' });
   }
 
   try {
@@ -63,7 +121,7 @@ app.post('/api/auth/register', async (req, res) => {
   }
 });
 
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/auth/login', rateLimitAuth, async (req, res) => {
   const { username, password } = req.body || {};
 
   if (!username || !password) {
@@ -91,15 +149,15 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-app.post('/api/auth/logout', requireAuth, (_req, res) => {
+app.post('/api/auth/logout', authenticate, (_req, res) => {
   res.json({ message: 'Logged out successfully.' });
 });
 
-app.get('/api/auth/me', requireAuth, requireUser, (req, res) => {
+app.get('/api/auth/me', authenticate, (req, res) => {
   res.json({ user: { id: req.currentUser.id, username: req.currentUser.username } });
 });
 
-app.get('/api/users/me/best', requireAuth, requireUser, async (req, res) => {
+app.get('/api/users/me/best', authenticate, async (req, res) => {
   try {
     const { rows } = await pool.query(
       `SELECT wpm, raw_wpm, accuracy, consistency, errors, correct_chars, incorrect_chars, test_duration, created_at
@@ -117,24 +175,37 @@ app.get('/api/users/me/best', requireAuth, requireUser, async (req, res) => {
   }
 });
 
+// Every user's single best run, ranked globally. Both leaderboard routes read
+// this, so a rank shown in one always matches the rank shown in the other.
+const RANKED_LEADERBOARD = `
+  SELECT u.id, u.username, r.wpm, r.raw_wpm, r.accuracy, r.consistency, r.errors,
+         r.correct_chars, r.incorrect_chars, r.test_duration, r.created_at,
+         ROW_NUMBER() OVER (
+           ORDER BY r.wpm DESC, r.accuracy DESC, r.errors ASC, r.test_duration ASC, r.created_at ASC
+         ) AS rank
+  FROM (
+    SELECT user_id, wpm, raw_wpm, accuracy, consistency, errors, correct_chars,
+           incorrect_chars, test_duration, created_at,
+           ROW_NUMBER() OVER (
+             PARTITION BY user_id
+             ORDER BY wpm DESC, accuracy DESC, errors ASC, test_duration ASC, created_at DESC
+           ) AS row_num
+    FROM results
+  ) r
+  JOIN users u ON u.id = r.user_id
+  WHERE r.row_num = 1
+`;
+
 app.get('/api/leaderboard', async (req, res) => {
   const page = Math.max(1, Number(req.query.page) || 1);
   const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 10));
   const offset = (page - 1) * limit;
 
   try {
+    // Ordering by rank rather than by the sort keys keeps the displayed order
+    // and the printed rank in step when two runs tie on every key.
     const { rows } = await pool.query(
-      `SELECT u.id, u.username, r.wpm, r.raw_wpm, r.accuracy, r.consistency, r.errors, r.correct_chars, r.incorrect_chars, r.test_duration, r.created_at,
-              ROW_NUMBER() OVER (ORDER BY r.wpm DESC, r.accuracy DESC, r.errors ASC, r.test_duration ASC, r.created_at ASC) AS rank
-       FROM (
-         SELECT user_id, wpm, raw_wpm, accuracy, consistency, errors, correct_chars, incorrect_chars, test_duration, created_at,
-                ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY wpm DESC, accuracy DESC, errors ASC, test_duration ASC, created_at DESC) AS row_num
-         FROM results
-       ) r
-       JOIN users u ON u.id = r.user_id
-       WHERE r.row_num = 1
-       ORDER BY r.wpm DESC, r.accuracy DESC, r.errors ASC, r.test_duration ASC
-       LIMIT $1 OFFSET $2`,
+      `SELECT * FROM (${RANKED_LEADERBOARD}) ranked ORDER BY rank LIMIT $1 OFFSET $2`,
       [limit, offset],
     );
 
@@ -153,23 +224,10 @@ app.get('/api/leaderboard', async (req, res) => {
   }
 });
 
-app.get('/api/leaderboard/me', requireAuth, requireUser, async (req, res) => {
+app.get('/api/leaderboard/me', authenticate, async (req, res) => {
   try {
     const { rows } = await pool.query(
-      `WITH ranked AS (
-         SELECT u.id, u.username, r.wpm, r.raw_wpm, r.accuracy, r.consistency, r.errors, r.correct_chars, r.incorrect_chars, r.test_duration,
-                ROW_NUMBER() OVER (
-                  ORDER BY r.wpm DESC, r.accuracy DESC, r.errors ASC, r.test_duration ASC, r.created_at ASC
-                ) AS rank
-         FROM (
-           SELECT user_id, wpm, raw_wpm, accuracy, consistency, errors, correct_chars, incorrect_chars, test_duration, created_at,
-                  ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY wpm DESC, accuracy DESC, errors ASC, test_duration ASC, created_at DESC) AS row_num
-           FROM results
-         ) r
-         JOIN users u ON u.id = r.user_id
-         WHERE r.row_num = 1
-      )
-      SELECT * FROM ranked WHERE id = $1`,
+      `SELECT * FROM (${RANKED_LEADERBOARD}) ranked WHERE id = $1`,
       [req.currentUser.id],
     );
 
@@ -180,19 +238,12 @@ app.get('/api/leaderboard/me', requireAuth, requireUser, async (req, res) => {
   }
 });
 
-app.post('/api/tests/result', requireAuth, requireUser, async (req, res) => {
+app.post('/api/tests/result', authenticate, async (req, res) => {
   const payload = normalizeResult(req.body || {});
 
-  if (payload.wpm < 0 || payload.raw_wpm < 0 || payload.accuracy < 0 || payload.accuracy > 100 || payload.consistency < 0 || payload.consistency > 100) {
-    return res.status(400).json({ message: 'Result values are outside valid ranges.' });
-  }
-
-  if (!Number.isFinite(payload.test_duration) || payload.test_duration <= 0 || payload.test_duration > 300) {
-    return res.status(400).json({ message: 'Test duration is invalid.' });
-  }
-
-  if (payload.errors < 0 || payload.correct_chars < 0 || payload.incorrect_chars < 0) {
-    return res.status(400).json({ message: 'Character counts cannot be negative.' });
+  const invalid = validateResult(payload);
+  if (invalid) {
+    return res.status(400).json({ message: invalid });
   }
 
   try {
@@ -256,6 +307,10 @@ async function start() {
   }
 }
 
-start();
+// Only listen when run directly, so the tests can import the app and bind their
+// own ephemeral port.
+if (require.main === module) {
+  start();
+}
 
 module.exports = app;

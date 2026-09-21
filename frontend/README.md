@@ -1,16 +1,16 @@
-# React + Vite
+# Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+React + Vite. `npm run dev` for HMR, `npm test` for the typing-maths tests,
+`npm run lint` for oxlint.
 
-Currently, two official plugins are available:
+`npm run build` bakes `VITE_API_URL` into the bundle - it is a build-time
+value, not a runtime one. It defaults to `/api`, which is right whenever the
+same host serves both the app and the API (nginx.conf and the Dockerfile do).
+A split deploy has to set it to the API's full URL *before* building.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Railway
 
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+`railway.json` here is for a second service whose Root Directory is `frontend`
+(the repo root `railway.json` only starts the backend). That service needs
+`VITE_API_URL` set to the backend service's public URL, and the backend needs
+this service's URL in its `CORS_ORIGIN`.

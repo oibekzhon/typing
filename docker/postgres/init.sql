@@ -18,3 +18,6 @@ CREATE TABLE IF NOT EXISTS results (
   test_duration INTEGER NOT NULL,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+CREATE INDEX IF NOT EXISTS results_user_best_idx
+  ON results (user_id, wpm DESC, accuracy DESC, errors ASC, test_duration ASC, created_at DESC);

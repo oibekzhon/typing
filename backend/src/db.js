@@ -31,6 +31,13 @@ async function initDatabase() {
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
   `);
+
+  // Matches the PARTITION BY / ORDER BY the leaderboard uses to pick each
+  // user's best run, so that query stops scanning the whole table.
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS results_user_best_idx
+      ON results (user_id, wpm DESC, accuracy DESC, errors ASC, test_duration ASC, created_at DESC);
+  `);
 }
 
 module.exports = { pool, initDatabase };
