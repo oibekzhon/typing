@@ -1,0 +1,36 @@
+version: '3.9'
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: typingdb
+      POSTGRES_USER: typinguser
+      POSTGRES_PASSWORD: typingpass
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+
+  backend:
+    build:
+      context: ./backend
+    env_file:
+      - ./backend/.env
+    depends_on:
+      - db
+    ports:
+      - '4000:4000'
+
+  frontend:
+    build:
+      context: ./frontend
+    depends_on:
+      - backend
+    ports:
+      - '80:80'
+
+volumes:
+  postgres_data:
