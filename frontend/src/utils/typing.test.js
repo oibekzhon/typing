@@ -91,3 +91,52 @@ test('every offered language can actually produce text', () => {
     assert.ok(createTypingText(value, { wordCount: 10 }).length > 0, value);
   }
 });
+
+test('punctuation mode spreads punctuation through the text, not only at the end', () => {
+  const text = createTypingText('english', { punctuation: true, wordCount: 60 });
+  const body = text.slice(0, -1);
+
+  assert.match(text, /^\p{Lu}/u, text);
+  assert.match(text, /\.$/, text);
+  assert.ok(/[.,;:!?]/.test(body), `no punctuation inside the text: ${text}`);
+  // Every sentence end has to hand a capital to the word that follows it.
+  for (const [, next] of body.matchAll(/[.!?]\s+(\S)/gu)) {
+    assert.match(next, /\p{Lu}|["'‘(]/u, `lowercase after a sentence end: ${text}`);
+  }
+  assert.equal(text.split(' ').length, 60, text);
+});
+
+test('numbers mode swaps words for numbers across the text', () => {
+  const words = createTypingText('english', { numbers: true, wordCount: 100 }).split(' ');
+  const digitWords = words.filter((word) => /^\d+$/.test(word));
+
+  assert.ok(digitWords.length >= 3, `only ${digitWords.length} numbers in 100 words`);
+  assert.ok(digitWords.length <= 40, `${digitWords.length} numbers is more text than practice`);
+  assert.ok(words.every((word) => /^\d+$/.test(word) || !/\d/.test(word)), 'digits leaked into a word');
+});
+
+test('every language draws from a pool big enough that a test is not repetitive', () => {
+  for (const { value } of getLanguageOptions()) {
+    const seen = new Set();
+    for (let run = 0; run < 50; run += 1) {
+      createTypingText(value, { wordCount: 50 }).split(' ').forEach((word) => seen.add(word));
+    }
+    assert.ok(seen.size >= 180, `${value} only draws from ${seen.size} words`);
+  }
+});
+
+test('restarting gives a different text almost every time', () => {
+  const texts = new Set();
+  for (let run = 0; run < 50; run += 1) texts.add(createTypingText('english', { wordCount: 25 }));
+  assert.equal(texts.size, 50);
+});
+
+test('the same word never comes up twice in a row', () => {
+  for (const { value } of getLanguageOptions()) {
+    for (let run = 0; run < 20; run += 1) {
+      const words = createTypingText(value, { wordCount: 100 }).split(' ');
+      const repeat = words.findIndex((word, index) => index > 0 && word === words[index - 1]);
+      assert.equal(repeat, -1, `${value} repeated "${words[repeat]}" at ${repeat}`);
+    }
+  }
+});

@@ -168,6 +168,13 @@ button:hover {
   color: var(--accent);
 }
 
+/* quote mode brings its own text, so the generators do not apply */
+.chip:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  background: none;
+}
+
 .chip.select {
   appearance: none;
   padding-right: 1.4rem;

@@ -5,11 +5,11 @@ the frontend, and Express + PostgreSQL powers the backend.
 
 ## Project structure
 
-| Path | What it is |
-|---|---|
-| `backend/` | Express API, `pg`, JWT auth. CommonJS. |
-| `frontend/` | React 19 + Vite typing application. |
-| `backend/` | Express API, PostgreSQL access, JWT authentication, and results. |
+| Path          | What it is                                                       |
+| ------------- | ---------------------------------------------------------------- |
+| `backend/`  | Express API,`pg`, JWT auth. CommonJS.                          |
+| `frontend/` | React 19 + Vite typing application.                              |
+| `backend/`  | Express API, PostgreSQL access, JWT authentication, and results. |
 
 ## Local development
 
@@ -21,7 +21,7 @@ npm install
 npm run dev
 ```
 
-Open <http://localhost:5173>. For authentication and the global leaderboard,
+Open [http://localhost:5173](http://localhost:5173). For authentication and the global leaderboard,
 run PostgreSQL locally with a database named `typingdb`, user `typinguser`, and
 password `typingpass`. Copy `backend/.env.example` to `backend/.env`, then run
 the API in another shell:
@@ -32,7 +32,7 @@ npm install
 npm run dev
 ```
 
-The API runs on <http://localhost:4000>. The frontend uses the API URL from
+The API runs on [http://localhost:4000](http://localhost:4000). The frontend uses the API URL from
 `frontend/.env.example`.
 
 ## Tests
@@ -58,4 +58,3 @@ request comes from one address.
 - **The auth rate limiter counts in process memory**, so limits are per instance.
 - **Arabic renders right-to-left but unshaped** - each character is its own
   `<span>`, and browsers do not join Arabic letters across elements.
-

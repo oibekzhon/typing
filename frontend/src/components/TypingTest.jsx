@@ -54,8 +54,12 @@ export default function TypingTest({ onResultSaved }) {
     incorrectChars: 0,
   });
 
+  // A quote is a fixed piece of text, so it is a mode of its own: no clock, no
+  // word count, and none of the generated punctuation or numbers on top of it.
+  const activeMode = quote ? 'quote' : mode;
+
   useEffect(() => {
-    if (mode === 'time' && started && !finished) {
+    if (activeMode === 'time' && started && !finished) {
       frameRef.current = setInterval(() => {
         const elapsedMs = Date.now() - startedAtRef.current;
         const remaining = Math.max(0, duration * 1000 - elapsedMs);
@@ -70,7 +74,7 @@ export default function TypingTest({ onResultSaved }) {
     return () => {
       if (frameRef.current) clearInterval(frameRef.current);
     };
-  }, [started, finished, duration, mode]);
+  }, [started, finished, duration, activeMode]);
 
   useEffect(() => {
     const correctChars = [...typed].filter((ch, index) => text[index] === ch).length;
@@ -160,7 +164,7 @@ export default function TypingTest({ onResultSaved }) {
     numbers,
     quote,
     uppercase,
-    wordCount: mode === 'words' ? wordCount : 0,
+    wordCount: activeMode === 'words' ? wordCount : 0,
   })) => {
     setTyped('');
     setStarted(false);
@@ -185,7 +189,7 @@ export default function TypingTest({ onResultSaved }) {
     numbers,
     quote,
     uppercase,
-    wordCount: mode === 'words' ? wordCount : 0,
+    wordCount: activeMode === 'words' ? wordCount : 0,
     ...nextOptions,
   });
 
@@ -247,7 +251,7 @@ export default function TypingTest({ onResultSaved }) {
       errors: Math.max(0, totalTyped - correctChars),
       correct_chars: correctChars,
       incorrect_chars: Math.max(0, totalTyped - correctChars),
-      test_duration: mode === 'time' ? duration : Math.max(1, Math.round((elapsedMs || 1000) / 1000)),
+      test_duration: activeMode === 'time' ? duration : Math.max(1, Math.round((elapsedMs || 1000) / 1000)),
     };
 
     onResultSaved?.(payload);
@@ -273,7 +277,7 @@ export default function TypingTest({ onResultSaved }) {
 
     setTyped(value);
 
-    if (mode === 'time') {
+    if (activeMode === 'time') {
       // a time test ends on the clock, never on running out of words
       if (value.length > text.length - 40) {
         setText((previous) => `${previous} ${buildText()}`);
@@ -294,7 +298,7 @@ export default function TypingTest({ onResultSaved }) {
       numbers,
       quote,
       uppercase,
-      wordCount: mode === 'words' ? wordCount : 0,
+      wordCount: activeMode === 'words' ? wordCount : 0,
     });
     resetTest(nextText);
   };
@@ -312,18 +316,14 @@ export default function TypingTest({ onResultSaved }) {
   };
 
   const changeTextOption = (key, value) => {
-    const nextOptions = { [key]: value };
-    if (key === 'punctuation') setPunctuation(value);
-    if (key === 'numbers') setNumbers(value);
-    if (key === 'quote') setQuote(value);
-    if (key === 'uppercase') setUppercase(value);
+    const setters = { punctuation: setPunctuation, numbers: setNumbers, quote: setQuote, uppercase: setUppercase };
+    setters[key](value);
+
+    const next = { punctuation, numbers, quote, uppercase, [key]: value };
     resetTest(createTypingText(selectedLanguage, {
-      punctuation: key === 'punctuation' ? value : punctuation,
-      numbers: key === 'numbers' ? value : numbers,
-      quote: key === 'quote' ? value : quote,
-      uppercase: key === 'uppercase' ? value : uppercase,
-      wordCount: mode === 'words' ? wordCount : 0,
-      ...nextOptions,
+      ...next,
+      // leaving quote mode goes back to whatever the mode chips still show
+      wordCount: !next.quote && mode === 'words' ? wordCount : 0,
     }));
   };
 
@@ -361,7 +361,7 @@ export default function TypingTest({ onResultSaved }) {
       className={option === wordCount ? 'active' : ''}
       onClick={() => {
         setWordCount(option);
-        if (mode === 'words') resetTest(buildText({ wordCount: option }));
+        if (activeMode === 'words') resetTest(buildText({ wordCount: option }));
       }}
     >
       {option}
@@ -369,6 +369,7 @@ export default function TypingTest({ onResultSaved }) {
   ));
 
   const typedWords = typed.trim() ? typed.trim().split(/\s+/).length : 0;
+  const totalWords = text.trim().split(/\s+/).length;
 
   return (
     <div className={`typing-shell${started && !finished ? ' is-running' : ''}`}>
@@ -376,24 +377,28 @@ export default function TypingTest({ onResultSaved }) {
           useful mid-test, and a still screen is easier to read against. */}
       <div className="config-bar">
         <div className="config-group" role="group" aria-label="Text options">
-          <button type="button" className={punctuation ? 'chip active' : 'chip'} onClick={() => changeTextOption('punctuation', !punctuation)}>@ punctuation</button>
-          <button type="button" className={numbers ? 'chip active' : 'chip'} onClick={() => changeTextOption('numbers', !numbers)}># numbers</button>
+          <button type="button" className={punctuation ? 'chip active' : 'chip'} disabled={quote} onClick={() => changeTextOption('punctuation', !punctuation)}>@ punctuation</button>
+          <button type="button" className={numbers ? 'chip active' : 'chip'} disabled={quote} onClick={() => changeTextOption('numbers', !numbers)}># numbers</button>
           <button type="button" className={quote ? 'chip active' : 'chip'} onClick={() => changeTextOption('quote', !quote)}>❝ quote</button>
           <button type="button" className={uppercase ? 'chip active' : 'chip'} onClick={() => changeTextOption('uppercase', !uppercase)}>A words</button>
         </div>
 
-        <span className="config-divider" />
+        {quote ? null : (
+          <>
+            <span className="config-divider" />
 
-        <div className="config-group" role="group" aria-label="Test mode">
-          <button type="button" className={mode === 'time' ? 'chip active' : 'chip'} onClick={() => changeMode('time')}>time</button>
-          <button type="button" className={mode === 'words' ? 'chip active' : 'chip'} onClick={() => changeMode('words')}>words</button>
-        </div>
+            <div className="config-group" role="group" aria-label="Test mode">
+              <button type="button" className={mode === 'time' ? 'chip active' : 'chip'} onClick={() => changeMode('time')}>time</button>
+              <button type="button" className={mode === 'words' ? 'chip active' : 'chip'} onClick={() => changeMode('words')}>words</button>
+            </div>
 
-        <span className="config-divider" />
+            <span className="config-divider" />
 
-        <div className="config-group" role="group" aria-label={mode === 'time' ? 'Duration' : 'Word count'}>
-          {mode === 'time' ? durationOptions : wordOptions}
-        </div>
+            <div className="config-group" role="group" aria-label={mode === 'time' ? 'Duration' : 'Word count'}>
+              {mode === 'time' ? durationOptions : wordOptions}
+            </div>
+          </>
+        )}
 
         <span className="config-divider" />
 
@@ -408,7 +413,7 @@ export default function TypingTest({ onResultSaved }) {
 
       <div className="live-bar">
         <span className="live-counter mono">
-          {mode === 'time' ? Math.ceil(timeLeft) : `${typedWords}/${wordCount}`}
+          {activeMode === 'time' ? Math.ceil(timeLeft) : `${typedWords}/${activeMode === 'quote' ? totalWords : wordCount}`}
         </span>
         <span className="live-wpm mono">{Math.round(stats.wpm)} wpm</span>
       </div>
