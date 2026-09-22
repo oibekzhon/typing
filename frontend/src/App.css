@@ -84,7 +84,8 @@ button:hover {
 
 .nav-button:hover {
   color: var(--text);
-  background: var(--surface);
+  /* background: var(--surface); */
+  background: var(--logout);
 }
 
 .nav-button.primary {

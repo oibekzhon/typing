@@ -8,8 +8,6 @@ import RegisterPage from './pages/RegisterPage';
 import { authApi, leaderboardApi, resultApi, STORAGE_KEY } from './services/api';
 import './App.css';
 
-// The live region has to be in the DOM before the message is, or a screen
-// reader has nothing to watch and announces nothing.
 function ErrorBanner({ message, onDismiss }) {
   return (
     <div role="alert" aria-live="assertive">
@@ -48,8 +46,6 @@ function AppShell() {
       .finally(() => setAuthLoading(false));
   }, []);
 
-  // api.js drops the dead token; the header still has to stop showing a user
-  // who is no longer logged in, and say why the screen changed under them.
   useEffect(() => {
     const handleExpiry = () => {
       setUser(null);
@@ -63,7 +59,6 @@ function AppShell() {
     return () => window.removeEventListener('auth:expired', handleExpiry);
   }, [navigate]);
 
-  // Asking the server keeps the rank right for users outside the loaded page.
   const loadMyRank = async () => {
     try {
       const data = await leaderboardApi.current();
@@ -121,8 +116,6 @@ function AppShell() {
   };
 
   const handleResultSave = async (payload) => {
-    // Dropping a finished run in silence is the worst outcome here - the user
-    // typed for a full minute and has no idea why nothing happened.
     if (!user) {
       setError('Log in to save your result to the leaderboard.');
       return;
@@ -139,8 +132,6 @@ function AppShell() {
     }
   };
 
-  // postgres hands numeric columns back as strings, so every one of these needs
-  // coercing before it is rounded or formatted.
   const resultValue = (key) => Number(result?.result?.[key] ?? result?.best?.[key] ?? 0);
 
   if (authLoading) {
