@@ -1,5 +1,4 @@
-// Route-level tests against a real database. Needs the dev postgres running:
-//   docker compose up -d db
+// Route-level tests against a real database. Start PostgreSQL locally first.
 const assert = require('node:assert/strict');
 const { after, before, describe, it } = require('node:test');
 const app = require('./server');

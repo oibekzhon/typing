@@ -9,14 +9,12 @@ const { authenticate } = require('./middleware/auth');
 const app = express();
 const PORT = process.env.PORT || 4000;
 
-// Behind nginx or Railway, req.ip is the proxy unless we trust it - and a
-// shared ip would make the auth rate limiter lock out every user at once.
+// When deployed behind a proxy, use the original client IP for rate limiting.
 if (process.env.NODE_ENV === 'production') {
   app.set('trust proxy', 1);
 }
 
-// Same-origin deploys (nginx proxies /api) need no CORS at all; a split
-// frontend/backend deploy must list its origins in CORS_ORIGIN.
+// The local frontend and API run on separate ports, so CORS is enabled here.
 const corsOrigin = process.env.CORS_ORIGIN
   ? process.env.CORS_ORIGIN.split(',').map((origin) => origin.trim())
   : process.env.NODE_ENV !== 'production';
@@ -24,9 +22,7 @@ const corsOrigin = process.env.CORS_ORIGIN
 app.use(cors({ origin: corsOrigin }));
 app.use(express.json());
 
-// This service only ever returns JSON, so the headers that matter are the ones
-// stopping a browser from treating a response as something else. CSP and HSTS
-// belong on whatever serves the HTML - see frontend/nginx.conf.
+// This service only returns JSON, so apply the basic response hardening here.
 app.use((_req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');

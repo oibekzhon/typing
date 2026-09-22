@@ -77,7 +77,7 @@ test('quote mode keeps the original quote intact and ignores punctuation and num
 
   assert.ok(match, `expected one of the quote texts, got: ${text}`);
   assert.ok(!/\d/.test(text), `quote text unexpectedly contained digits: ${text}`);
-  assert.ok(!/[!?;:]/.test(normalizedText.replace(/[,.'()\[\]-]/g, '')), `quote text unexpectedly included extra punctuation: ${text}`);
+  assert.ok(!/[!?;:]/.test(normalizedText.replace(/[,.()'-]/g, '')), `quote text unexpectedly included extra punctuation: ${text}`);
 });
 
 test('arabic reads right to left, everything else left to right', () => {
