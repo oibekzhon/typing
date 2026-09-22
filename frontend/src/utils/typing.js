@@ -294,7 +294,7 @@ export function getLanguageDirection(language) {
   return RTL_LANGUAGES.has(language) ? 'rtl' : 'ltr';
 }
 
-const QUOTE_TEXTS = [
+export const QUOTE_TEXTS = [
   'The future depends on what you do today.',
   'Great things are done by a series of small things brought together.',
   'Success is the sum of small efforts repeated day in and day out.',
@@ -317,16 +317,40 @@ function addNumbers(text) {
   return `${text} Remember 3 simple steps, 5 minutes, and 100 percent focus.`;
 }
 
+function applyCaseMode(text, uppercase) {
+  if (!uppercase) return text.toLowerCase();
+
+  const lowered = text.toLowerCase();
+  let result = '';
+
+  for (let index = 0; index < lowered.length; index += 1) {
+    const character = lowered[index];
+
+    if (!/[A-Za-z]/u.test(character)) {
+      result += character;
+      continue;
+    }
+
+    const previous = lowered[index - 1] || '';
+    const next = lowered[index + 1] || '';
+    const shouldUppercase = index === 0 || /[\s(]/u.test(previous) || (/[.!?]/u.test(previous) && /[A-Za-z]/u.test(next)) || Math.random() < 0.22;
+
+    result += shouldUppercase ? character.toUpperCase() : character;
+  }
+
+  return result;
+}
+
 // One random sentence, cleaned up for the selected options.
 function composeChunk(language, { punctuation, numbers, quote }) {
-  let text = quote
-    ? QUOTE_TEXTS[Math.floor(Math.random() * QUOTE_TEXTS.length)]
-    : createSampleText(language);
+  if (quote) {
+    return QUOTE_TEXTS[Math.floor(Math.random() * QUOTE_TEXTS.length)].replace(/\s+/g, ' ').trim();
+  }
+
+  let text = createSampleText(language);
 
   if (punctuation) text = addPunctuation(text);
   if (numbers) text = addNumbers(text);
-
-  text = text.toLowerCase();
 
   if (!numbers) text = text.replace(/\d/g, '');
 
@@ -357,7 +381,5 @@ export function createTypingText(language = 'english', options = {}) {
     text = words.slice(0, wordCount).join(' ');
   }
 
-  if (uppercase) text = text.replace(/^\s*\p{L}/u, (letter) => letter.toUpperCase());
-
-  return text;
+  return uppercase ? applyCaseMode(text, true) : text.toLowerCase();
 }

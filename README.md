@@ -15,7 +15,7 @@ front, Express + PostgreSQL behind it.
 ## Running it with Docker
 
 ```sh
-cp .env.example backend/.env    # then edit JWT_SECRET
+cp .env.example backend/.env
 docker compose up --build
 ```
 
@@ -37,9 +37,9 @@ services:
 ## Running it for development
 
 ```sh
-docker compose up -d db                       # just the database
-cd backend  && npm install && npm run dev     # :4000
-cd frontend && npm install && npm run dev     # :5173, proxies to :4000
+docker compose up -d db
+cd backend  && npm install && npm run dev
+cd frontend && npm install && npm run dev
 ```
 
 `backend/.env` needs at least `DATABASE_URL`. `JWT_SECRET` falls back to a

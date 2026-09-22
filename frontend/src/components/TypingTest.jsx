@@ -379,7 +379,7 @@ export default function TypingTest({ onResultSaved }) {
           <button type="button" className={punctuation ? 'chip active' : 'chip'} onClick={() => changeTextOption('punctuation', !punctuation)}>@ punctuation</button>
           <button type="button" className={numbers ? 'chip active' : 'chip'} onClick={() => changeTextOption('numbers', !numbers)}># numbers</button>
           <button type="button" className={quote ? 'chip active' : 'chip'} onClick={() => changeTextOption('quote', !quote)}>❝ quote</button>
-          <button type="button" className={uppercase ? 'chip active' : 'chip'} onClick={() => changeTextOption('uppercase', !uppercase)}>Aa case</button>
+          <button type="button" className={uppercase ? 'chip active' : 'chip'} onClick={() => changeTextOption('uppercase', !uppercase)}>A words</button>
         </div>
 
         <span className="config-divider" />

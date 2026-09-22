@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
+  QUOTE_TEXTS,
   calculateAccuracy,
   calculateConsistency,
   calculateRawWpm,
@@ -62,9 +63,21 @@ test('digits and punctuation appear only when asked for', () => {
   assert.ok(/\d/.test(createTypingText('english', { numbers: true })));
 });
 
-test('sentence case capitalises the first letter of the final text', () => {
+test('case mode applies more than just the first character and keeps text usable', () => {
   const text = createTypingText('english', { uppercase: true, wordCount: 30 });
   assert.match(text, /^\p{Lu}/u);
+  const uppercaseLetters = [...text].filter((char) => /[A-Z]/u.test(char)).length;
+  assert.ok(uppercaseLetters > 3, `expected many uppercase letters, got ${uppercaseLetters} in ${text}`);
+});
+
+test('quote mode keeps the original quote intact and ignores punctuation and number generators', () => {
+  const text = createTypingText('english', { quote: true, punctuation: true, numbers: true, wordCount: 0 });
+  const normalizedText = text.toLowerCase();
+  const match = QUOTE_TEXTS.some((quote) => quote.toLowerCase() === normalizedText);
+
+  assert.ok(match, `expected one of the quote texts, got: ${text}`);
+  assert.ok(!/\d/.test(text), `quote text unexpectedly contained digits: ${text}`);
+  assert.ok(!/[!?;:]/.test(normalizedText.replace(/[,.'()\[\]-]/g, '')), `quote text unexpectedly included extra punctuation: ${text}`);
 });
 
 test('arabic reads right to left, everything else left to right', () => {
